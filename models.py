@@ -1,5 +1,6 @@
-from typing import Optional, List
-from pydantic import Field
+from typing import Optional, List, Union, Any
+import json
+from pydantic import Field, field_validator
 from openenv.core.env_server.types import Action, Observation
 
 
@@ -18,7 +19,28 @@ class CosmicBytesObservation(Observation):
 class CosmicBytesAction(Action):
     """Action for the Robot Task Sequencer environment."""
 
-    step_sequence: List[str] = Field(..., description="Ordered list of action strings")
+    step_sequence: Union[List[str], str] = Field(..., description="Ordered list of action strings or a single action string")
+
+    @field_validator("step_sequence", mode="before")
+    @classmethod
+    def parse_step_sequence(cls, v: Any) -> List[str]:
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            v_stripped = v.strip()
+            # Try to parse as JSON list if it looks like one
+            if v_stripped.startswith("[") and v_stripped.endswith("]"):
+                try:
+                    parsed = json.loads(v_stripped)
+                    if isinstance(parsed, list):
+                        return [str(x) for x in parsed]
+                except json.JSONDecodeError:
+                    pass
+            # If it's just a comma-separated string, or a single action
+            if "," in v_stripped:
+                return [x.strip() for x in v_stripped.split(",") if x.strip()]
+            return [v_stripped] if v_stripped else []
+        return []
 
 
 class CosmicBytesReward(Observation):
