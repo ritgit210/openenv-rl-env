@@ -1,0 +1,35 @@
+spec_version: 1
+name: cosmic-bytes
+version: 1.0.0
+description: >
+  An RL environment where an agent observes an image of a robot workspace
+  and must produce the correct ordered sequence of robot actions to complete the task.
+author: Ritesh Gond
+tags: [robotics, planning, vision, sequencing, real-world, openenv]
+runtime: fastapi
+app: cosmic_bytes.server.app:app
+port: 7860
+tasks:
+  - id: easy_sorting
+    difficulty: easy
+    description: Sort colored blocks into matching bins
+  - id: medium_assembly
+    difficulty: medium
+    description: Assemble parts in correct structural order based on the scene
+  - id: hard_multistep
+    difficulty: hard
+    description: Multi-stage task requiring hazard clearance before object retrieval
+observation_space:
+  image_base64: "Optional base64-encoded RGB image of the robot workspace"
+  task_description: "Natural language description of the goal"
+  available_actions: "List of valid action strings the robot can perform"
+  attempt: "Current attempt number"
+  max_attempts: "Maximum attempts allowed"
+action_space:
+  step_sequence: "Ordered list of action strings chosen from available_actions"
+reward_range: [0.0, 1.0]
+api:
+  reset: "POST /reset"
+  step: "POST /step"
+  state: "GET /state"
+  tasks: "GET /tasks"
