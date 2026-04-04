@@ -37,14 +37,14 @@ The observation space is designed to provide all necessary context for the agent
 - `hint` (Optional[str]): A context-aware hint provided after failed attempts.
 
 ### Action Space
-The agent produces a single, structured action per step:
-- `step_sequence` (List[str]): An ordered list of action strings chosen from the `available_actions` list.
+The agent produces a single action per step, iterating until the sequence is complete:
+- `step_sequence` (List[str]): An ordered list of action strings, typically sending one action per step into the physics logic.
 
 ### Reward Function
-The environment uses a **Longest Common Subsequence (LCS)** grader to provide a dense reward signal (0.0 – 1.0):
-- **1.0**: Perfect sequence match.
-- **Partial Credit**: Based on the ratio of correct steps in the correct order relative to the ground truth.
-- **Penalty**: A small penalty is applied for extra, unnecessary steps to encourage efficiency.
+The environment uses a **stateful, interactive grader** to provide cumulative, dense rewards at each step based on physical interactions:
+- **Positive Rewards (+0.1 to +0.8)**: Awarded for successful goal completions, item securing, and accurate assembly.
+- **Penalties (-0.05 to -0.3)**: Penalized for hazard violations, dropping dependencies, or trying to pick up items when the robot gripper is full.
+- **Success Bonus**: A +1.0 completion score when the final required stage is complete.
 
 ---
 
@@ -86,20 +86,24 @@ openenv push
 
 ### 🐍 Python Usage
 ```python
-from cosmic_bytes import CosmicBytesEnv
+from cosmic_bytes.models import CosmicBytesAction
+from cosmic_bytes.server.cosmic_bytes_environment import CosmicBytesEnvironment
 
-with CosmicBytesEnv(base_url="http://localhost:7860") as env:
-    obs = env.reset("easy_sorting")
-    result = env.step(CosmicBytesAction(step_sequence=["pick_up_red_block", "move_to_red_bin", "place_in_red_bin"]))
-    print(f"Goal: {obs.task_description}")
-    print(f"Outcome: {result.observation.reward} reward")
+# Spin up environment and target a task
+env = CosmicBytesEnvironment(task_id="easy_sorting")
+obs = env.reset()
+
+# Act iteratively in the stateful machine
+result = env.step(CosmicBytesAction(step_sequence=["pick_up_red_block"]))
+print(f"Reward: {result.reward}")
+print(f"State: {result.task_description}")
 ```
 
 ---
 
 ## Baseline Performance
 
-Results using `meta-llama/Llama-3.3-70B-Instruct` as a zero-shot planner:
+Results using `meta-llama/llama-4-scout-17b-16e-instruct` interacting iteratively through visual parsing and feedback constraints:
 
 | Task | Success | Average Score |
 | :--- | :--- | :--- |
