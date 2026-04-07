@@ -52,12 +52,30 @@ TASKS: Dict[str, Dict[str, Any]] = {
     }
 }
 
+# ── Image Caching ────────────────────────────────────────────────────────────
+_IMAGE_CACHE: Dict[str, str] = {}
+
+def preload_images():
+    root = Path(__file__).resolve().parent.parent
+    data_dir = root / "data"
+    if not data_dir.exists():
+        return
+    for t_id in TASKS.keys():
+        p = data_dir / f"{t_id}.png"
+        if p.exists():
+            _IMAGE_CACHE[t_id] = base64.b64encode(p.read_bytes()).decode("utf-8")
+
+preload_images()
+
 class CosmicBytesEnvironment(Environment):
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
     def __init__(self, task_id: str = "easy_sorting"):
         self._task_id = task_id
-        self._task = TASKS[task_id]
+        if self._task_id not in TASKS:
+            # Safe fallback
+            self._task_id = "easy_sorting"
+        self._task = TASKS[self._task_id]
         self._state = State(episode_id=str(uuid4()), step_count=0)
         
         # Physical State tracking
@@ -223,8 +241,4 @@ class CosmicBytesEnvironment(Environment):
         )
 
     def _load_image(self) -> Optional[str]:
-        root = Path(__file__).resolve().parent.parent
-        p = root / "data" / f"{self._task_id}.png"
-        if p.exists():
-            return base64.b64encode(p.read_bytes()).decode("utf-8")
-        return None
+        return _IMAGE_CACHE.get(self._task_id)
