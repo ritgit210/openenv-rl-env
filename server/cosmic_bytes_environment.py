@@ -97,20 +97,36 @@ class CosmicBytesEnvironment(Environment):
         if self._done:
             return self._build_observation("Episode finished.")
 
-        self._state.step_count += 1
-        input_action = action.step_sequence[0] if action.step_sequence else ""
-        reward, feedback = self._process_logic(input_action)
+        total_reward = 0.0
+        feedbacks = []
         
-        if len(self._completed_goals) == len(self._task.get("goals", [])):
-            self._done = True
-            reward += 1.0
-            feedback += " [TASK SUCCESS]"
-        elif self._state.step_count >= self._max_steps:
-            self._done = True
-            feedback += " [TIMEOUT]"
+        # Handle both list and string sequences based on CosmicBytesAction model
+        sequence = action.step_sequence
+        if isinstance(sequence, str):
+            sequence = [sequence]
+            
+        for input_action in sequence:
+            if self._done:
+                break
+                
+            self._state.step_count += 1
+            reward, feedback = self._process_logic(input_action)
+            total_reward += reward
+            feedbacks.append(f"[{input_action}] {feedback}")
+            
+            # Check for completion or failure after each sub-step
+            if len(self._completed_goals) == len(self._task.get("goals", [])):
+                self._done = True
+                total_reward += 1.0
+                feedbacks.append("[TASK SUCCESS]")
+                break
+            elif self._state.step_count >= self._max_steps:
+                self._done = True
+                feedbacks.append("[TIMEOUT]")
+                break
 
-        obs = self._build_observation(feedback)
-        obs.reward = float(reward)
+        obs = self._build_observation(" | ".join(feedbacks))
+        obs.reward = float(total_reward)
         obs.done = self._done
         return obs
 
