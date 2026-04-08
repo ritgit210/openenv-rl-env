@@ -102,7 +102,10 @@ async def run_episode(task_id: str):
         print(f"[STEP] task={task_id} step={steps} action={chosen_action} reward={obs.reward:.2f} done={obs.done}")
 
     success = "SUCCESS" in obs.task_description
-    print(f"[END] task={task_id} success={success} steps={steps} final_reward={sum(rewards):.2f}")
+    # task_score = sum of all rewards; clamp to validator-safe (0, 1) range
+    task_score = max(0.001, min(0.999, sum(rewards)))
+    print(f"[END] task={task_id} success={success} steps={steps} task_score={task_score:.4f}")
+    return task_score
 
 
 async def main():
@@ -110,11 +113,13 @@ async def main():
         print("API_KEY missing.")
         sys.exit(1)
 
-    # SECURE SEQUENTIAL execution to avoid rate limiting across tasks
-    # Still use async internal calls but one task at a time top-level.
-    # Total time for 3 tasks * 12 steps * 1s is < 1 min, well within 30 min.
+    scores = {}
+    # Sequential execution – avoids rate-limit spikes across tasks
     for task_id in TASKS.keys():
-        await run_episode(task_id)
+        scores[task_id] = await run_episode(task_id)
+
+    print(f"\n[SCORES] {scores}")
+    return scores
 
 
 if __name__ == "__main__":

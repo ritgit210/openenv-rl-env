@@ -95,16 +95,21 @@ class CosmicBytesEnvironment(Environment):
         self._current_score = 0.0
         return self._build_observation("Environment Reset.")
 
-    # Minimum reward emitted per step – keeps every obs.reward > 0.0
+    # Minimum reward emitted per LIVE step — keeps total always > 0.0
     _MIN_STEP_REWARD: float = 0.01
+    # Hard ceiling on accumulated total — total can NEVER reach 1.0
+    _MAX_TOTAL_SCORE: float = 0.95
 
     def step(self, action: CosmicBytesAction) -> CosmicBytesObservation: # type: ignore[override]
+        # Post-done guard: return reward=0.0 so extra evaluator steps can NOT
+        # push the accumulated total past 1.0.  This is intentional — 0.0 does
+        # not add to the sum, so the total stays locked at its completion value.
         if self._done:
             obs = self._build_observation("Episode finished.")
-            obs.reward = self._MIN_STEP_REWARD  # must be > 0, never 0.0
+            obs.reward = 0.0  # does NOT shift the total
             return obs
 
-        total_step_reward = 0.0
+        total_step_reward = 0.0  # kept for compatibility
         feedbacks = []
         
         # Handle both list and string sequences based on CosmicBytesAction model
@@ -112,7 +117,7 @@ class CosmicBytesEnvironment(Environment):
         if isinstance(sequence, str):
             sequence = [sequence]
             
-        # We track how many goals we completed BEFORE processing these input actions
+        # Track goals completed BEFORE this call
         old_goals = len(self._completed_goals)
         
         for input_action in sequence:
@@ -120,7 +125,7 @@ class CosmicBytesEnvironment(Environment):
                 break
                 
             self._state.step_count += 1
-            logic_reward, feedback = self._process_logic(input_action)
+            _logic_reward, feedback = self._process_logic(input_action)  # logic_reward intentionally unused
             feedbacks.append(f"[{input_action}] {feedback}")
             
             # Check for completion or failure after each sub-step
@@ -136,32 +141,23 @@ class CosmicBytesEnvironment(Environment):
         new_goals = len(self._completed_goals)
         goals_achieved_this_step = new_goals - old_goals
 
-        # --- Reward calculation ---
-        # Every step must emit a reward STRICTLY IN (0, 1) — validator requirement.
-        #
-        # Budget breakdown (max_steps=15, max_goals=6):
-        #   • 0.01 per-step floor  × 15 steps  = 0.15
-        #   • 0.80 goal budget     ÷ n_goals    = per-goal share
-        #   • Maximum possible sum = 0.15 + 0.80 = 0.95  (well below 1.0)
-
         total_goals_count = len(self._task.get("goals", []))
         if total_goals_count == 0:
             total_goals_count = 1
         reward_per_goal = round(0.80 / total_goals_count, 6)
 
-        # Floor: every step gets at least _MIN_STEP_REWARD (never 0.0)
-        final_reward = self._MIN_STEP_REWARD
-
-        # Goal bonus on top of the floor
-        final_reward += goals_achieved_this_step * reward_per_goal
-
-        # Round to 4 d.p. – precise enough, avoids float drift
+        # Floor: every LIVE step gets at least _MIN_STEP_REWARD (never 0.0)
+        final_reward = self._MIN_STEP_REWARD + goals_achieved_this_step * reward_per_goal
         final_reward = round(final_reward, 4)
 
-        # Paranoia clamp: must stay strictly inside (0, 1)
-        final_reward = max(0.001, min(0.999, final_reward))
+        # Hard total cap: if adding this reward would hit or exceed the ceiling,
+        # shrink it to exactly fill remaining headroom (still > 0).
+        headroom = self._MAX_TOTAL_SCORE - self._current_score
+        if final_reward > headroom > 0:
+            final_reward = round(headroom, 4)
+        elif headroom <= 0:
+            final_reward = 0.001  # absolute minimum so reward > 0
 
-        # Update internal score tracker
         self._current_score = round(self._current_score + final_reward, 4)
 
         obs = self._build_observation(" | ".join(feedbacks) if feedbacks else "No action sequence provided.")
