@@ -84,7 +84,7 @@ class CosmicBytesEnvironment(Environment):
         self._completed_goals: List[str] = []
         self._done = False
         self._max_steps = 15
-        self._current_cumulative_reward = 0.0
+        self._current_cumulative_reward = 0.005 # Start with a small non-zero base
 
     def reset(self) -> CosmicBytesObservation:
         self._state = State(episode_id=str(uuid4()), step_count=0)
@@ -92,7 +92,7 @@ class CosmicBytesEnvironment(Environment):
         self._at_location = "table"
         self._completed_goals = []
         self._done = False
-        self._current_cumulative_reward = 0.0
+        self._current_cumulative_reward = 0.005
         return self._build_observation("Environment Reset.")
 
     def step(self, action: CosmicBytesAction) -> CosmicBytesObservation: # type: ignore[override]
@@ -126,18 +126,18 @@ class CosmicBytesEnvironment(Environment):
                 feedbacks.append("[TIMEOUT]")
                 break
             
-        # Calculate new cumulative score based on progress: strictly in (0, 1)
-        # Using [0.1, 0.9] range to avoid 0.0 and 1.0
+        # Calculate new cumulative score based on progress: strictly in (0.01, 0.99)
+        # We add a small step bonus (0.001) to ensure every single step reward is > 0.
         goals = self._task.get("goals", [])
         total_goals = len(goals) if goals else 1
-        completion_ratio = len(self._completed_goals) / total_goals
+        completion_ratio = min(1.0, len(self._completed_goals) / total_goals)
         
-        # Target cumulative reward is 0.1 (baseline) + up to 0.8 bonus for completion
-        target_cumulative = 0.1 + (0.8 * completion_ratio)
+        # target_cumulative is in range [0.05 + 0.001, 0.05 + 0.9 + 15*0.001] = [0.051, 0.965]
+        target_cumulative = 0.05 + (0.9 * completion_ratio) + (0.001 * self._state.step_count)
         
         # Reward this step is difference to reach target
-        final_reward = target_cumulative - self._current_cumulative_reward
-        self._current_cumulative_reward = target_cumulative
+        final_reward = max(0.001, target_cumulative - self._current_cumulative_reward)
+        self._current_cumulative_reward += final_reward
 
         obs = self._build_observation(" | ".join(feedbacks))
         obs.reward = float(final_reward)
@@ -259,6 +259,9 @@ class CosmicBytesEnvironment(Environment):
 
     def _build_observation(self, feedback: str) -> CosmicBytesObservation:
         state_desc = f"At: {self._at_location} | Holding: {self._inventory or 'None'} | Goals: {', '.join(self._completed_goals) if self._completed_goals else 'None'}"
+        # Task score is derived from cumulative reward, strictly clamped to (0.01, 0.99)
+        current_score = max(0.01, min(0.99, self._current_cumulative_reward))
+        
         return CosmicBytesObservation(
             task_id=self._task_id,
             task_description=f"{self._task['description']} | State: {state_desc} | Last Result: {feedback}",
@@ -267,7 +270,8 @@ class CosmicBytesEnvironment(Environment):
             attempt=self._state.step_count,
             max_attempts=self._max_steps,
             done=self._done,
-            reward=0.0
+            reward=0.01, # Default non-zero reward
+            score=current_score
         )
 
     def _load_image(self) -> Optional[str]:
