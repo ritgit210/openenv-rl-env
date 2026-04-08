@@ -139,7 +139,7 @@ class CosmicBytesEnvironment(Environment):
         final_reward = max(0.001, target_cumulative - self._current_cumulative_reward)
         self._current_cumulative_reward += final_reward
 
-        obs = self._build_observation(" | ".join(feedbacks))
+        obs = self._build_observation(" | ".join(feedbacks) if feedbacks else "No action sequence provided.")
         obs.reward = float(final_reward)
         obs.done = self._done
         return obs
