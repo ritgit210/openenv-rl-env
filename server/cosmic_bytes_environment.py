@@ -84,7 +84,7 @@ class CosmicBytesEnvironment(Environment):
         self._completed_goals: List[str] = []
         self._done = False
         self._max_steps = 15
-        self._current_cumulative_reward = 0.05 # Initial baseline rounds to 0.05
+        self._current_score = 0.05 # Initial baseline score
 
     def reset(self) -> CosmicBytesObservation:
         self._state = State(episode_id=str(uuid4()), step_count=0)
@@ -92,14 +92,14 @@ class CosmicBytesEnvironment(Environment):
         self._at_location = "table"
         self._completed_goals = []
         self._done = False
-        self._current_cumulative_reward = 0.05
+        self._current_score = 0.05
         return self._build_observation("Environment Reset.")
 
     def step(self, action: CosmicBytesAction) -> CosmicBytesObservation: # type: ignore[override]
         if self._done:
             return self._build_observation("Episode finished.")
 
-        total_reward = 0.0
+        total_step_reward = 0.0
         feedbacks = []
         
         # Handle both list and string sequences based on CosmicBytesAction model
@@ -112,8 +112,15 @@ class CosmicBytesEnvironment(Environment):
                 break
                 
             self._state.step_count += 1
-            reward, feedback = self._process_logic(input_action)
-            total_reward += reward
+            # Every sub-step gets a tiny base reward to avoid 0.0
+            sub_reward = 0.01
+            
+            logic_reward, feedback = self._process_logic(input_action)
+            # If a goal was completed (logic_reward > 0), add a fixed bonus
+            if logic_reward > 0:
+                sub_reward += 0.12
+                
+            total_step_reward += sub_reward
             feedbacks.append(f"[{input_action}] {feedback}")
             
             # Check for completion or failure after each sub-step
@@ -126,20 +133,12 @@ class CosmicBytesEnvironment(Environment):
                 feedbacks.append("[TIMEOUT]")
                 break
             
-        # Calculate new cumulative score based on progress: strictly in (0.05, 0.95)
-        # We use increments of 0.01 to ensure they are visible after 2-decimal rounding.
-        goals = self._task.get("goals", [])
-        total_goals = len(goals) if goals else 1
-        completion_ratio = min(1.0, len(self._completed_goals) / total_goals)
-        
-        # target_cumulative = base(0.1) + progress(0.7) + step_bonus(0.01*step)
-        # Max steps = 15, so max target = 0.1 + 0.7 + 0.15 = 0.95
-        # Min target (step 1) = 0.1 + 0 + 0.01 = 0.11
-        target_cumulative = 0.10 + round(0.70 * completion_ratio, 2) + round(0.01 * self._state.step_count, 2)
-        
-        # Reward this step is difference to reach target, at least 0.01
-        final_reward = round(max(0.01, target_cumulative - self._current_cumulative_reward), 2)
-        self._current_cumulative_reward = round(self._current_cumulative_reward + final_reward, 2)
+        # Update score and ensure step reward is at least 0.01
+        new_total_score = round(min(0.95, self._current_score + total_step_reward), 2)
+        # The reward for this step is the amount added to reach the new total
+        # (keeping at least 0.01 even if capped to satisfy 'no 0.0' rule)
+        final_reward = round(max(0.01, new_total_score - self._current_score), 2)
+        self._current_score = round(min(0.95, self._current_score + final_reward), 2)
 
         obs = self._build_observation(" | ".join(feedbacks) if feedbacks else "No action sequence provided.")
         obs.reward = float(final_reward)
@@ -277,8 +276,8 @@ class CosmicBytesEnvironment(Environment):
 
     def _build_observation(self, feedback: str) -> CosmicBytesObservation:
         state_desc = f"At: {self._at_location} | Holding: {self._inventory or 'None'} | Goals: {', '.join(self._completed_goals) if self._completed_goals else 'None'}"
-        # Task score is derived from cumulative reward, rounded to 2 decimal places
-        current_score = round(max(0.01, min(0.99, self._current_cumulative_reward)), 2)
+        # Task score capped and rounded to 2 decimal places
+        current_score = round(max(0.01, min(0.99, self._current_score)), 2)
         
         return CosmicBytesObservation(
             task_id=self._task_id,
