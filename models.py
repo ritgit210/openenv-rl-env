@@ -28,19 +28,30 @@ class CosmicBytesAction(Action):
         if isinstance(v, list):
             return v
         if isinstance(v, str):
-            v_stripped = v.strip()
+            v_str: str = v.strip()
             # Try to parse as JSON list if it looks like one
-            if v_stripped.startswith("[") and v_stripped.endswith("]"):
+            if v_str.startswith("[") and v_str.endswith("]"):
                 try:
-                    parsed = json.loads(v_stripped)
+                    parsed = json.loads(v_str)
                     if isinstance(parsed, list):
                         return [str(x) for x in parsed]
-                except json.JSONDecodeError:
-                    pass
-            # If it's just a comma-separated string, or a single action
-            if "," in v_stripped:
-                return [x.strip() for x in v_stripped.split(",") if x.strip()]
-            return [v_stripped] if v_stripped else []
+                except Exception:
+                    # Fallback to manual split if JSON fails (e.g. trailing comma)
+                    v_str = v_str[1:-1].strip()
+            
+            # Manual split by comma, then clean up each element
+            if "," in v_str:
+                items = []
+                for x in v_str.split(","):
+                    # Strip whitespace and common boarders/quotes
+                    item = x.strip().strip('"').strip("'").strip()
+                    if item:
+                        items.append(item)
+                return items
+            
+            # Single action, clean it too
+            final_v = v_str.strip('"').strip("'").strip()
+            return [final_v] if final_v else []
         return []
 
 
