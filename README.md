@@ -1,5 +1,5 @@
 ---
-title: Robot Task Sequencer (Cosmic Bytes)
+title: Cosmic Bytes Robot Task Sequencer
 emoji: 🤖
 colorFrom: blue
 colorTo: indigo
@@ -10,13 +10,13 @@ tags:
   - openenv
 ---
 
-# Robot Task Sequencer 
+# Cosmic Bytes: Robot Task Sequencer
 
-**Robot Task Sequencer** is an RL environment where an AI agent must produce the correct ordered sequence of robot actions to complete specific tasks based on vision-language inputs. It serves as a benchmark for evaluating the planning and sequencing capabilities of large multimodal models and RL agents in robotics-inspired domains.
+**Cosmic Bytes** is an RL environment where an AI agent must produce the correct ordered sequence of robot actions to complete specific tasks based on vision-language inputs. It serves as a benchmark for evaluating the planning and sequencing capabilities of large multimodal models and RL agents in robotics-inspired domains.
 
 ## Motivation
 
-As AI moves closer to physical action, the ability to plan long-term sequences of discrete actions based on visual scene understanding becomes critical. Robot Task Sequencer provides a structured way to test if models can:
+As AI moves closer to physical action, the ability to plan long-term sequences of discrete actions based on visual scene understanding becomes critical. Cosmic Bytes provides a structured way to test if models can:
 1.  Parse a visual scene for relevant objects.
 2.  Decompose a natural language goal into atomic steps.
 3.  Adhere to physical constraints (e.g., clearing hazards before retrieval).
@@ -107,10 +107,10 @@ Results using `meta-llama/llama-4-scout-17b-16e-instruct` interacting iterativel
 
 | Task | Success | Average Score |
 | :--- | :--- | :--- |
-| Easy Sorting | **✓** | 1.000 |
-| Medium Assembly | **✓** | 1.000 |
-| Hard Multistep | **✓** | 1.000 |
-| **Total Average** | - | **1.000** |
+| Easy Sorting | **✓** | 0.900 |
+| Medium Assembly | **✓** | 0.900 |
+| Hard Multistep | **✓** | 0.900 |
+| **Total Average** | - | **0.900** |
 
 ---
 

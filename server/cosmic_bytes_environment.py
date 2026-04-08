@@ -84,7 +84,8 @@ class CosmicBytesEnvironment(Environment):
         self._completed_goals: List[str] = []
         self._done = False
         self._max_steps = 15
-        self._current_score = 0.05 # Initial baseline score
+        self._current_score = 0.00 # Starts at 0.00 so the first step 0.05 reward tracks properly
+        self._first_step_reward_given = False
 
     def reset(self) -> CosmicBytesObservation:
         self._state = State(episode_id=str(uuid4()), step_count=0)
@@ -92,12 +93,15 @@ class CosmicBytesEnvironment(Environment):
         self._at_location = "table"
         self._completed_goals = []
         self._done = False
-        self._current_score = 0.05
+        self._current_score = 0.00
+        self._first_step_reward_given = False
         return self._build_observation("Environment Reset.")
 
     def step(self, action: CosmicBytesAction) -> CosmicBytesObservation: # type: ignore[override]
         if self._done:
-            return self._build_observation("Episode finished.")
+            obs = self._build_observation("Episode finished.")
+            obs.reward = 0.0
+            return obs
 
         total_step_reward = 0.0
         feedbacks = []
@@ -107,20 +111,15 @@ class CosmicBytesEnvironment(Environment):
         if isinstance(sequence, str):
             sequence = [sequence]
             
+        # We track how many goals we completed BEFORE processing these input actions
+        old_goals = len(self._completed_goals)
+        
         for input_action in sequence:
             if self._done:
                 break
                 
             self._state.step_count += 1
-            # Every sub-step gets a tiny base reward to avoid 0.0
-            sub_reward = 0.01
-            
             logic_reward, feedback = self._process_logic(input_action)
-            # If a goal was completed (logic_reward > 0), add a fixed bonus
-            if logic_reward > 0:
-                sub_reward += 0.12
-                
-            total_step_reward += sub_reward
             feedbacks.append(f"[{input_action}] {feedback}")
             
             # Check for completion or failure after each sub-step
@@ -133,12 +132,29 @@ class CosmicBytesEnvironment(Environment):
                 feedbacks.append("[TIMEOUT]")
                 break
             
-        # Update score and ensure step reward is at least 0.01
-        new_total_score = round(min(0.95, self._current_score + total_step_reward), 2)
-        # The reward for this step is the amount added to reach the new total
-        # (keeping at least 0.01 even if capped to satisfy 'no 0.0' rule)
-        final_reward = round(max(0.01, new_total_score - self._current_score), 2)
-        self._current_score = round(min(0.95, self._current_score + final_reward), 2)
+        new_goals = len(self._completed_goals)
+        goals_achieved_this_step = new_goals - old_goals
+
+        # Calculate exact reward to give in this step
+        # Base reward of 0.05 given purely on the VERY FIRST step of the episode
+        # ensures the sum of rewards is always > 0.0
+        final_reward = 0.0
+        if not self._first_step_reward_given:
+            final_reward += 0.05
+            self._first_step_reward_given = True
+            
+        # Give exact fraction of 0.90 for each goal achieved
+        total_goals_count = len(self._task.get("goals", []))
+        if total_goals_count == 0: total_goals_count = 1
+        reward_per_goal = 0.90 / total_goals_count
+        
+        final_reward += (goals_achieved_this_step * reward_per_goal)
+        
+        # Round it to 2 decimals
+        final_reward = round(final_reward, 2)
+        
+        # Update our current score tracking purely by summing the exact rewards given
+        self._current_score = round(self._current_score + final_reward, 2)
 
         obs = self._build_observation(" | ".join(feedbacks) if feedbacks else "No action sequence provided.")
         obs.reward = float(final_reward)
@@ -287,7 +303,7 @@ class CosmicBytesEnvironment(Environment):
             attempt=self._state.step_count,
             max_attempts=self._max_steps,
             done=self._done,
-            reward=0.01, # Default non-zero reward
+            reward=0.0, # Default to 0.0 so we do not artificially inflate the sum
             score=current_score
         )
 
