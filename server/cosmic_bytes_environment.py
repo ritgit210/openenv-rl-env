@@ -84,8 +84,7 @@ class CosmicBytesEnvironment(Environment):
         self._completed_goals: List[str] = []
         self._done = False
         self._max_steps = 15
-        self._current_score = 0.00 # Starts at 0.00 so the first step 0.05 reward tracks properly
-        self._first_step_reward_given = False
+        self._current_score = 0.0
 
     def reset(self) -> CosmicBytesObservation:
         self._state = State(episode_id=str(uuid4()), step_count=0)
@@ -93,14 +92,16 @@ class CosmicBytesEnvironment(Environment):
         self._at_location = "table"
         self._completed_goals = []
         self._done = False
-        self._current_score = 0.00
-        self._first_step_reward_given = False
+        self._current_score = 0.0
         return self._build_observation("Environment Reset.")
+
+    # Minimum reward emitted per step – keeps every obs.reward > 0.0
+    _MIN_STEP_REWARD: float = 0.01
 
     def step(self, action: CosmicBytesAction) -> CosmicBytesObservation: # type: ignore[override]
         if self._done:
             obs = self._build_observation("Episode finished.")
-            obs.reward = 0.0
+            obs.reward = self._MIN_STEP_REWARD  # must be > 0, never 0.0
             return obs
 
         total_step_reward = 0.0
@@ -135,26 +136,33 @@ class CosmicBytesEnvironment(Environment):
         new_goals = len(self._completed_goals)
         goals_achieved_this_step = new_goals - old_goals
 
-        # Calculate exact reward to give in this step
-        # Base reward of 0.05 given purely on the VERY FIRST step of the episode
-        # ensures the sum of rewards is always > 0.0
-        final_reward = 0.0
-        if not self._first_step_reward_given:
-            final_reward += 0.05
-            self._first_step_reward_given = True
-            
-        # Give exact fraction of 0.90 for each goal achieved
+        # --- Reward calculation ---
+        # Every step must emit a reward STRICTLY IN (0, 1) — validator requirement.
+        #
+        # Budget breakdown (max_steps=15, max_goals=6):
+        #   • 0.01 per-step floor  × 15 steps  = 0.15
+        #   • 0.80 goal budget     ÷ n_goals    = per-goal share
+        #   • Maximum possible sum = 0.15 + 0.80 = 0.95  (well below 1.0)
+
         total_goals_count = len(self._task.get("goals", []))
-        if total_goals_count == 0: total_goals_count = 1
-        reward_per_goal = 0.90 / total_goals_count
-        
-        final_reward += (goals_achieved_this_step * reward_per_goal)
-        
-        # Round it to 2 decimals
-        final_reward = round(final_reward, 2)
-        
-        # Update our current score tracking purely by summing the exact rewards given
-        self._current_score = round(self._current_score + final_reward, 2)
+        if total_goals_count == 0:
+            total_goals_count = 1
+        reward_per_goal = round(0.80 / total_goals_count, 6)
+
+        # Floor: every step gets at least _MIN_STEP_REWARD (never 0.0)
+        final_reward = self._MIN_STEP_REWARD
+
+        # Goal bonus on top of the floor
+        final_reward += goals_achieved_this_step * reward_per_goal
+
+        # Round to 4 d.p. – precise enough, avoids float drift
+        final_reward = round(final_reward, 4)
+
+        # Paranoia clamp: must stay strictly inside (0, 1)
+        final_reward = max(0.001, min(0.999, final_reward))
+
+        # Update internal score tracker
+        self._current_score = round(self._current_score + final_reward, 4)
 
         obs = self._build_observation(" | ".join(feedbacks) if feedbacks else "No action sequence provided.")
         obs.reward = float(final_reward)
