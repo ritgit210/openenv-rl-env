@@ -14,12 +14,13 @@ class CosmicBytesObservation(Observation):
     attempt: int = Field(default=0, description="Current attempt number")
     max_attempts: int = Field(default=0, description="Maximum attempts allowed")
     hint: Optional[str] = Field(None, description="Optional hint for the task")
+    score: float = Field(0.0, description="Current task score (0.0-1.0)")
 
 
 class CosmicBytesAction(Action):
     """Action for the Robot Task Sequencer environment."""
 
-    step_sequence: Union[List[str], str] = Field(..., description="Ordered list of action strings or a single action string")
+    step_sequence: Union[List[str], str] = Field(default_factory=list, description="Ordered list of action strings or a single action string")
 
     @field_validator("step_sequence", mode="before")
     @classmethod
