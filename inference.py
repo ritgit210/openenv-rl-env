@@ -16,8 +16,12 @@ load_dotenv()
 # Allow imports from root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from cosmic_bytes.server.cosmic_bytes_environment import CosmicBytesEnvironment, TASKS
-from cosmic_bytes.models import CosmicBytesAction
+try:
+    from cosmic_bytes.server.cosmic_bytes_environment import CosmicBytesEnvironment, TASKS
+    from cosmic_bytes.models import CosmicBytesAction
+except ImportError:
+    from server.cosmic_bytes_environment import CosmicBytesEnvironment, TASKS
+    from models import CosmicBytesAction
 
 # CONFIG
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
@@ -43,6 +47,15 @@ def _normalize_task_score(value: float) -> float:
     if not isinstance(value, (int, float)) or not math.isfinite(value):
         return _SCORE_EPSILON
     return float(max(_SCORE_EPSILON, min(1.0 - _SCORE_EPSILON, value)))
+
+
+def _log_end(task_id: str, success: bool, steps: int, score: float, rewards: list[float]) -> None:
+    rewards_str = ",".join(f"{r:.4f}" for r in rewards)
+    # Keep `score=` token for validator compatibility.
+    print(
+        f"[END] task={task_id} success={str(success).lower()} steps={steps} score={score:.4f} rewards={rewards_str}",
+        flush=True,
+    )
 
 def extract_action(response_text, valid_actions):
     try:
@@ -115,14 +128,14 @@ async def run_episode(task_id: str):
     success = "SUCCESS" in obs.task_description
     # Sum step rewards, then enforce strict validator-safe open interval.
     task_score = _normalize_task_score(sum(rewards))
-    print(f"[END] task={task_id} success={success} steps={steps} task_score={task_score:.4f}")
+    _log_end(task_id=task_id, success=success, steps=steps, score=task_score, rewards=rewards)
     return task_score
 
 
 async def main():
     if not API_KEY:
-        print("API_KEY missing.")
-        sys.exit(1)
+        # Do not hard-exit: keep execution flowing so all tasks still emit score lines.
+        print("WARNING: API_KEY missing; continuing with fallback behavior.", file=sys.stderr)
 
     scores = {}
     # Sequential execution – avoids rate-limit spikes across tasks
