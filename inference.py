@@ -7,6 +7,7 @@ import sys
 import json
 import random
 import asyncio
+import math
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
@@ -32,6 +33,16 @@ TIMEOUT = 25.0
 client = AsyncOpenAI(base_url=API_BASE_URL, api_key=API_KEY, timeout=TIMEOUT)
 
 SYSTEM_PROMPT = """You are a robot task agent. Follow instructions exactly and return JSON."""
+
+# Validator requires strict open interval (0, 1) per task.
+_SCORE_EPSILON = 1e-3
+
+
+def _normalize_task_score(value: float) -> float:
+    """Return a finite score guaranteed to be strictly inside (0, 1)."""
+    if not isinstance(value, (int, float)) or not math.isfinite(value):
+        return _SCORE_EPSILON
+    return float(max(_SCORE_EPSILON, min(1.0 - _SCORE_EPSILON, value)))
 
 def extract_action(response_text, valid_actions):
     try:
@@ -102,8 +113,8 @@ async def run_episode(task_id: str):
         print(f"[STEP] task={task_id} step={steps} action={chosen_action} reward={obs.reward:.2f} done={obs.done}")
 
     success = "SUCCESS" in obs.task_description
-    # task_score = sum of all rewards; clamp to validator-safe (0, 1) range
-    task_score = max(0.001, min(0.999, sum(rewards)))
+    # Sum step rewards, then enforce strict validator-safe open interval.
+    task_score = _normalize_task_score(sum(rewards))
     print(f"[END] task={task_id} success={success} steps={steps} task_score={task_score:.4f}")
     return task_score
 
@@ -116,7 +127,19 @@ async def main():
     scores = {}
     # Sequential execution – avoids rate-limit spikes across tasks
     for task_id in TASKS.keys():
-        scores[task_id] = await run_episode(task_id)
+        try:
+            scores[task_id] = _normalize_task_score(await run_episode(task_id))
+        except Exception as e:
+            print(f"[WARN] task={task_id} failed during rollout: {str(e)[:120]}")
+            # Keep submission valid even if one task rollout fails.
+            scores[task_id] = _SCORE_EPSILON
+
+    # Final compliance gate: never emit boundary values to validator.
+    for task_id, raw_score in list(scores.items()):
+        normalized = _normalize_task_score(raw_score)
+        if normalized != raw_score:
+            print(f"[WARN] normalized out-of-range score for {task_id}: {raw_score} -> {normalized}")
+        scores[task_id] = normalized
 
     print(f"\n[SCORES] {scores}")
     return scores
