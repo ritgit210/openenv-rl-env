@@ -32,7 +32,7 @@ TASKS: Dict[str, Dict[str, Any]] = {
     },
     "medium_assembly": {
         "difficulty": "medium",
-        "objects": ["base_plate", "panels", "top_cover"],
+        "objects": ["base", "panel", "cover"],
         "goals": ["base_placed", "side_panel_1", "side_panel_2", "cover_attached", "assembly_secured"],
         "available_actions": [
             "pick_up_base", "place_base", "pick_up_panel", "attach_panel", 
@@ -42,8 +42,8 @@ TASKS: Dict[str, Dict[str, Any]] = {
     },
     "hard_multistep": {
         "difficulty": "hard",
-        "objects": ["spill", "glass_flask", "locked_box", "target_item"],
-        "goals": ["hazards_assessed", "spill_cleaned", "flask_cleared", "box_opened", "item_retrieved"],
+        "objects": ["spill", "flask", "locked_box", "item"],
+        "goals": ["hazards_assessed", "spill_cleaned", "flask_cleared", "box_unlocked", "box_opened", "item_retrieved"],
         "available_actions": [
             "assess_workspace", "clean_spill", "pick_up_flask", "place_flask_safely",
             "unlock_box", "open_box", "pick_up_item", "place_in_shipping_crate"
@@ -84,7 +84,7 @@ class CosmicBytesEnvironment(Environment):
         self._completed_goals: List[str] = []
         self._done = False
         self._max_steps = 15
-        self._current_cumulative_reward = 0.005 # Start with a small non-zero base
+        self._current_cumulative_reward = 0.05 # Initial baseline rounds to 0.05
 
     def reset(self) -> CosmicBytesObservation:
         self._state = State(episode_id=str(uuid4()), step_count=0)
@@ -92,7 +92,7 @@ class CosmicBytesEnvironment(Environment):
         self._at_location = "table"
         self._completed_goals = []
         self._done = False
-        self._current_cumulative_reward = 0.005
+        self._current_cumulative_reward = 0.05
         return self._build_observation("Environment Reset.")
 
     def step(self, action: CosmicBytesAction) -> CosmicBytesObservation: # type: ignore[override]
@@ -126,18 +126,20 @@ class CosmicBytesEnvironment(Environment):
                 feedbacks.append("[TIMEOUT]")
                 break
             
-        # Calculate new cumulative score based on progress: strictly in (0.01, 0.99)
-        # We add a small step bonus (0.001) to ensure every single step reward is > 0.
+        # Calculate new cumulative score based on progress: strictly in (0.05, 0.95)
+        # We use increments of 0.01 to ensure they are visible after 2-decimal rounding.
         goals = self._task.get("goals", [])
         total_goals = len(goals) if goals else 1
         completion_ratio = min(1.0, len(self._completed_goals) / total_goals)
         
-        # target_cumulative is in range [0.05 + 0.001, 0.05 + 0.9 + 15*0.001] = [0.051, 0.965]
-        target_cumulative = 0.05 + (0.9 * completion_ratio) + (0.001 * self._state.step_count)
+        # target_cumulative = base(0.1) + progress(0.7) + step_bonus(0.01*step)
+        # Max steps = 15, so max target = 0.1 + 0.7 + 0.15 = 0.95
+        # Min target (step 1) = 0.1 + 0 + 0.01 = 0.11
+        target_cumulative = 0.10 + round(0.70 * completion_ratio, 2) + round(0.01 * self._state.step_count, 2)
         
-        # Reward this step is difference to reach target
-        final_reward = max(0.001, target_cumulative - self._current_cumulative_reward)
-        self._current_cumulative_reward += final_reward
+        # Reward this step is difference to reach target, at least 0.01
+        final_reward = round(max(0.01, target_cumulative - self._current_cumulative_reward), 2)
+        self._current_cumulative_reward = round(self._current_cumulative_reward + final_reward, 2)
 
         obs = self._build_observation(" | ".join(feedbacks) if feedbacks else "No action sequence provided.")
         obs.reward = float(final_reward)
@@ -147,19 +149,7 @@ class CosmicBytesEnvironment(Environment):
     def _process_logic(self, action: str) -> tuple[float, str]:
         reward = -0.05
         
-        # UNIVERSAL ACTIONS
-        if action.startswith("pick_up_"):
-            obj = action.replace("pick_up_", "")
-            if self._inventory: return -0.2, f"Failed: Already holding {self._inventory}."
-            self._inventory = obj
-            return 0.2, f"Picked up {obj}."
-
-        elif action.startswith("move_to_"):
-            loc = action.replace("move_to_", "")
-            self._at_location = loc
-            return 0.1, f"Moved to {loc}."
-
-        # TASK SPECIFIC LOGIC
+        # 1. TASK SPECIFIC OVERRIDES (Checked First)
         if self._task_id == "easy_sorting":
             if action.startswith("place_in_"):
                 target = action.replace("place_in_", "")
@@ -236,20 +226,48 @@ class CosmicBytesEnvironment(Environment):
                         return 0.4, "Flask cleared."
                     self._inventory = None
                     return 0.0, "Flask already cleared."
+            elif action == "unlock_box":
+                if "flask_cleared" not in self._completed_goals: return -0.3, "Failed: Hazards still blocking pass."
+                goal = "box_unlocked"
+                if goal not in self._completed_goals:
+                    self._completed_goals.append(goal)
+                    return 0.4, "Box unlocked."
+                return 0.0, "Already unlocked."
             elif action == "open_box":
-                if "flask_cleared" not in self._completed_goals: return -0.2, "Path Blocked: Move flask."
+                if "box_unlocked" not in self._completed_goals: return -0.2, "Locked: Box won't budge."
                 goal = "box_opened"
                 if goal not in self._completed_goals: 
                     self._completed_goals.append(goal)
                     return 0.5, "Box opened. Target item visible."
                 return 0.0, "Box already open."
+            elif action == "pick_up_item":
+                if "box_opened" not in self._completed_goals: return -0.3, "Failed: The item is still locked inside the box."
+                if self._inventory: return -0.2, f"Failed: Already holding {self._inventory}."
+                self._inventory = "item"
+                return 0.2, "Picked up the target item."
             elif action == "place_in_shipping_crate":
                 if self._inventory == "item" and "box_opened" in self._completed_goals:
                     goal = "item_retrieved"
                     if goal not in self._completed_goals: 
                         self._completed_goals.append(goal)
+                        self._inventory = None
                         return 0.8, "Item secured in crate."
+                    self._inventory = None
                     return 0.0, "Item already retrieved."
+
+        # 2. UNIVERSAL ACTIONS (Fallback)
+        if action.startswith("pick_up_"):
+            obj = action.replace("pick_up_", "")
+            if self._inventory: return -0.2, f"Failed: Already holding {self._inventory}."
+            self._inventory = obj
+            return 0.2, f"Picked up {obj}."
+
+        elif action.startswith("move_to_"):
+            loc = action.replace("move_to_", "")
+            self._at_location = loc
+            return 0.1, f"Moved to {loc}."
+
+        return reward, f"Action '{action}' had no effect."
 
         return reward, f"Action '{action}' had no effect."
 
@@ -259,8 +277,8 @@ class CosmicBytesEnvironment(Environment):
 
     def _build_observation(self, feedback: str) -> CosmicBytesObservation:
         state_desc = f"At: {self._at_location} | Holding: {self._inventory or 'None'} | Goals: {', '.join(self._completed_goals) if self._completed_goals else 'None'}"
-        # Task score is derived from cumulative reward, strictly clamped to (0.01, 0.99)
-        current_score = max(0.01, min(0.99, self._current_cumulative_reward))
+        # Task score is derived from cumulative reward, rounded to 2 decimal places
+        current_score = round(max(0.01, min(0.99, self._current_cumulative_reward)), 2)
         
         return CosmicBytesObservation(
             task_id=self._task_id,
