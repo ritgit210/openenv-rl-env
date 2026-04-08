@@ -84,6 +84,7 @@ class CosmicBytesEnvironment(Environment):
         self._completed_goals: List[str] = []
         self._done = False
         self._max_steps = 15
+        self._current_cumulative_reward = 0.0
 
     def reset(self) -> CosmicBytesObservation:
         self._state = State(episode_id=str(uuid4()), step_count=0)
@@ -91,6 +92,7 @@ class CosmicBytesEnvironment(Environment):
         self._at_location = "table"
         self._completed_goals = []
         self._done = False
+        self._current_cumulative_reward = 0.0
         return self._build_observation("Environment Reset.")
 
     def step(self, action: CosmicBytesAction) -> CosmicBytesObservation: # type: ignore[override]
@@ -117,16 +119,28 @@ class CosmicBytesEnvironment(Environment):
             # Check for completion or failure after each sub-step
             if len(self._completed_goals) == len(self._task.get("goals", [])):
                 self._done = True
-                total_reward += 1.0
                 feedbacks.append("[TASK SUCCESS]")
                 break
             elif self._state.step_count >= self._max_steps:
                 self._done = True
                 feedbacks.append("[TIMEOUT]")
                 break
+            
+        # Calculate new cumulative score based on progress: strictly in (0, 1)
+        # Using [0.1, 0.9] range to avoid 0.0 and 1.0
+        goals = self._task.get("goals", [])
+        total_goals = len(goals) if goals else 1
+        completion_ratio = len(self._completed_goals) / total_goals
+        
+        # Target cumulative reward is 0.1 (baseline) + up to 0.8 bonus for completion
+        target_cumulative = 0.1 + (0.8 * completion_ratio)
+        
+        # Reward this step is difference to reach target
+        final_reward = target_cumulative - self._current_cumulative_reward
+        self._current_cumulative_reward = target_cumulative
 
         obs = self._build_observation(" | ".join(feedbacks))
-        obs.reward = float(total_reward)
+        obs.reward = float(final_reward)
         obs.done = self._done
         return obs
 
